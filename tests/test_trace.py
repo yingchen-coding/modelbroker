@@ -42,6 +42,18 @@ def test_append_and_summarize_roundtrip(tmp_path):
     assert s.total_seconds == 5.0
 
 
+def test_refusal_counts_as_failover(tmp_path):
+    path = tmp_path / "trace.jsonl"
+    tracemod.append(path, {
+        "provider": "codex",
+        "attempts": [
+            {"provider": "claude", "refusal": True},
+            {"provider": "codex", "refusal": False},
+        ],
+    })
+    assert tracemod.summarize(path).failovers == 1
+
+
 def test_summarize_missing_file_is_empty(tmp_path):
     s = tracemod.summarize(tmp_path / "nope.jsonl")
     assert s.runs == 0 and "no runs" in s.render()

@@ -55,6 +55,9 @@ command = "claude -p {prompt}"     # {prompt} = the task, passed as one argument
 strengths = ["reasoning", "architecture", "refactor", "review"]
 reset = "5h"                       # cool down this long after a usage-limit error
 quota_markers = ["usage limit", "rate limit", "429", "resets at"]
+# Optional and deliberately provider-specific: retry this request elsewhere without marking
+# Claude unhealthy or cooling it down.
+refusal_markers = ["classified as a policy risk", "cannot assist with this request"]
 
 [providers.codex]
 command = "codex exec {prompt}"
@@ -70,6 +73,11 @@ reasoning = ["claude", "codex"]
 
 Any CLI works — add a `[providers.<name>]` with its command and quota markers (gemini, aider, a
 local model via `ollama run`, …).
+
+`refusal_markers` handles over-refusal separately from outages and quota. When a configured phrase
+matches, the same prompt is tried on the next provider, the attempt is traced as `refusal`, and the
+first provider remains available for unrelated requests. Keep the markers narrow: broad phrases
+such as `cannot` can also occur in valid answers.
 
 ## How fail-over works
 

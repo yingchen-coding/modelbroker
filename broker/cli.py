@@ -96,7 +96,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         "seconds": round(sum(a.seconds for a in result.attempts), 3),
         "attempts": [
             {"provider": a.provider, "exit_code": a.exit_code, "quota_hit": a.quota_hit,
-             "unavailable": a.unavailable, "transient": a.transient, "seconds": a.seconds}
+             "unavailable": a.unavailable, "transient": a.transient, "refusal": a.refusal,
+             "seconds": a.seconds}
             for a in result.attempts
         ],
     })
@@ -106,7 +107,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         if result.attempts:
             print(f"  tried: {', '.join(a.label() for a in result.attempts)}", file=sys.stderr)
         return 1
-    failovers = [a.label() for a in result.attempts if a.quota_hit or a.unavailable or a.transient]
+    failovers = [a.label() for a in result.attempts
+                 if a.quota_hit or a.unavailable or a.transient or a.refusal]
     if failovers:
         print(f"broker: {', '.join(failovers)} → used {result.provider}", file=sys.stderr)
     print(result.output, end="" if result.output.endswith("\n") else "\n")

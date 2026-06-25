@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add opt-in policy-refusal failover that retries the current task on another provider without
+  incorrectly cooling down a healthy model.
+
 ## 0.2.1
 
 - **`-c/--config` is accepted after the subcommand too** (`broker run -t codegen -c X`), not only

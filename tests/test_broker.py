@@ -80,6 +80,38 @@ def test_failover_when_primary_hits_quota(tmp_path):
     assert state.get("claude").cooldown_remaining(1000.0) == 18000
 
 
+def test_configured_policy_refusal_fails_over_without_cooldown(tmp_path):
+    config_text = TOML.replace(
+        'quota_markers = ["usage limit", "429"]',
+        'quota_markers = ["usage limit", "429"]\nrefusal_markers = ["policy risk"]',
+    )
+    path = tmp_path / "broker.toml"
+    path.write_text(config_text)
+    cfg, state = cfgmod.load(path), _state(tmp_path)
+
+    def executor(argv, stdin):
+        if argv[0] == "claude":
+            return 1, "Blocked because this request may present a policy risk"
+        return 0, "answered by fallback"
+
+    result = run_task(cfg, state, "Explain Selmer groups", executor=executor,
+                      now_fn=lambda: 1000.0)
+
+    assert result.provider == "codex"
+    assert result.output == "answered by fallback"
+    assert result.attempts[0].refusal is True
+    assert result.attempts[0].label() == "claude(refusal)"
+    assert state.get("claude").available(1000.0) is True
+
+
+def test_refusal_detection_is_opt_in(tmp_path):
+    cfg, state = _cfg(tmp_path), _state(tmp_path)
+    result = run_task(cfg, state, "x", executor=lambda a, s: (1, "I cannot help with that"),
+                      now_fn=lambda: 1000.0)
+    assert result.provider == "claude"
+    assert result.attempts[0].refusal is False
+
+
 def test_cooled_down_provider_is_skipped(tmp_path):
     cfg, state = _cfg(tmp_path), _state(tmp_path)
     state.cool_down("claude", until=5000.0)           # claude unavailable until t=5000

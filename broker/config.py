@@ -34,6 +34,7 @@ class Provider:
     reset_seconds: int = 3600          # how long a quota-exhausted provider stays cooled down
     quota_markers: list[str] = field(default_factory=list)  # substrings that mean "out of quota"
     transient_markers: list[str] = field(default_factory=list)  # substrings that mean "retry elsewhere"
+    refusal_markers: list[str] = field(default_factory=list)  # policy refusal: retry, but do not cool down
 
     def matches_quota_error(self, output: str) -> bool:
         low = output.lower()
@@ -44,6 +45,11 @@ class Provider:
         return as-is. Quota is handled separately; terminal client errors must NOT match here."""
         low = output.lower()
         return any(marker.lower() in low for marker in self.transient_markers)
+
+    def matches_refusal(self, output: str) -> bool:
+        """Return whether output represents a policy refusal rather than provider failure."""
+        low = output.lower()
+        return any(marker.lower() in low for marker in self.refusal_markers)
 
 
 @dataclass
@@ -93,6 +99,9 @@ def load(path: str | Path = DEFAULT_CONFIG) -> Config:
             transient_markers=_coerce_str_list(spec.get("transient_markers"))
             or ["timeout", "timed out", "connection reset", "connection refused", "network",
                 "temporarily unavailable", "503", "502", "504", "500", "bad gateway"],
+            # Empty by default: refusal wording varies by provider and broad defaults can turn a
+            # legitimate answer containing words such as "cannot" into an unwanted retry.
+            refusal_markers=_coerce_str_list(spec.get("refusal_markers")),
         )
 
     routing = data.get("routing", {})

@@ -31,6 +31,7 @@ class Attempt:
     seconds: float = 0.0
     unavailable: bool = False   # the provider CLI was missing (exit 127) — failed over like quota
     transient: bool = False     # a retryable fault (timeout/network/5xx/crash) — failed over
+    refusal: bool = False       # a policy refusal — failed over without cooling the provider
 
     def label(self) -> str:
         """Provider name annotated with why it failed over (for status/trace lines)."""
@@ -40,6 +41,8 @@ class Attempt:
             return f"{self.provider}(unavailable)"
         if self.transient:
             return f"{self.provider}(transient)"
+        if self.refusal:
+            return f"{self.provider}(refusal)"
         return self.provider
 
 
@@ -137,17 +140,21 @@ def run_task(
         unavailable = code == _CMD_NOT_FOUND
         # a transient fault is classified only after ruling out quota/missing-CLI, so those keep
         # their own (longer) cooldowns and labels
-        transient = not quota and not unavailable and _classify_transient(provider, code, output)
+        refusal = provider.matches_refusal(output)
+        transient = (not quota and not unavailable and not refusal
+                     and _classify_transient(provider, code, output))
         result.attempts.append(Attempt(provider=name, exit_code=code, quota_hit=quota,
-                                       seconds=elapsed, unavailable=unavailable, transient=transient))
-        if quota or unavailable or transient:
+                                       seconds=elapsed, unavailable=unavailable,
+                                       transient=transient, refusal=refusal))
+        if quota or unavailable or transient or refusal:
             # quota-exhausted, missing-CLI, OR a retryable provider-side fault: cool the provider
             # down and fail over to the next, so one model's hiccup doesn't end the whole run. A
             # generic/terminal nonzero (bad prompt, policy refusal) falls through and is returned.
-            cooldown = (provider.reset_seconds if quota
-                        else _UNAVAILABLE_COOLDOWN if unavailable
-                        else _TRANSIENT_COOLDOWN)
-            state.cool_down(name, started + cooldown)
+            if not refusal:
+                cooldown = (provider.reset_seconds if quota
+                            else _UNAVAILABLE_COOLDOWN if unavailable
+                            else _TRANSIENT_COOLDOWN)
+                state.cool_down(name, started + cooldown)
             continue
         state.record_run(name, started)
         result.provider, result.exit_code, result.output = name, code, output

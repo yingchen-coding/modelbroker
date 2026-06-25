@@ -23,7 +23,7 @@ def append(path: str | Path, record: dict[str, object]) -> None:
 class TraceSummary:
     runs: int
     by_provider: dict[str, int]      # provider -> times it ultimately handled a run
-    failovers: int                   # runs where ≥1 provider was abandoned (quota / missing-CLI / transient)
+    failovers: int                   # runs where a provider was abandoned, including policy refusal
     quota_events: int                # total provider-level quota hits
     unresolved: int                  # runs no provider could handle
     total_seconds: float
@@ -59,8 +59,9 @@ def summarize(path: str | Path) -> TraceSummary:
             quota_hits = sum(1 for a in attempts if a.get("quota_hit"))
             quota_events += quota_hits
             # a failover is any run where a provider was abandoned mid-chain — for quota, a missing
-            # CLI, or a transient fault — not just quota
-            if any(a.get("quota_hit") or a.get("unavailable") or a.get("transient") for a in attempts):
+            # CLI, transient fault, or configured policy refusal — not just quota
+            if any(a.get("quota_hit") or a.get("unavailable") or a.get("transient")
+                   or a.get("refusal") for a in attempts):
                 failovers += 1
             prov = rec.get("provider")
             if prov:

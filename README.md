@@ -13,6 +13,12 @@ When one hits its limit you either stop, or babysit a manual switch. modelbroker
 for you — and routes each kind of task to whichever model is best at it. Zero dependencies, no API
 keys (it drives the CLIs you already have).
 
+## Star This If
+
+- You use multiple AI coding CLIs and lose time when one hits quota.
+- You want task-based routing instead of one default model for every job.
+- You need local traces showing which provider handled each task and why failover happened.
+
 ## What it does
 
 - **Strength-based routing.** A `codegen` task goes to Codex; an `architecture` or `reasoning` task
@@ -93,3 +99,9 @@ broker run -t reasoning "refactor this module"
 ## License
 
 MIT © Ying Chen
+
+## Local Review
+
+```bash
+scripts/pr_review_check.sh
+```

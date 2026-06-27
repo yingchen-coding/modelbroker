@@ -10,6 +10,11 @@
   context-window drift.
 - Add opt-in policy-refusal failover that retries the current task on another provider without
   incorrectly cooling down a healthy model.
+- **Report an all-refusal run honestly instead of as "exhausted".** When every provider answers
+  with a policy refusal, nothing was cooled down or out of quota — so the run no longer claims "all
+  providers exhausted" (which implied a quota window to wait on). It now reports that every provider
+  *refused* the prompt and surfaces the provider's own refusal message, so the real cause (the
+  prompt, not quota) is visible. `exhausted` stays `False` in this case.
 
 ## 0.2.1
 

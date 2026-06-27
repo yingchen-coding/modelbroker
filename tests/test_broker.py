@@ -149,6 +149,63 @@ def test_configured_policy_refusal_fails_over_without_cooldown(tmp_path):
     assert state.get("claude").available(1000.0) is True
 
 
+def test_all_providers_refuse_reports_refusal_not_exhaustion(tmp_path):
+    # When every provider answers with a policy refusal, the run must NOT be reported as
+    # "all providers exhausted" (nothing was cooled down / out of quota) — it must surface the
+    # refusal honestly so the caller sees the prompt is the problem, not a quota window.
+    config_text = (
+        TOML.replace(
+            'quota_markers = ["usage limit", "429"]',
+            'quota_markers = ["usage limit", "429"]\nrefusal_markers = ["policy risk"]',
+        ).replace(
+            'quota_markers = ["rate limit", "429"]',
+            'quota_markers = ["rate limit", "429"]\nrefusal_markers = ["policy risk"]',
+        )
+    )
+    path = tmp_path / "broker.toml"
+    path.write_text(config_text)
+    cfg, state = cfgmod.load(path), _state(tmp_path)
+
+    def executor(argv, stdin):
+        return 1, f"{argv[0]}: blocked, this request may present a policy risk"
+
+    result = run_task(cfg, state, "do the bad thing", executor=executor, now_fn=lambda: 1000.0)
+
+    assert result.provider is None
+    assert result.exhausted is False              # nothing was exhausted — all refused
+    assert result.exit_code == 1
+    assert "refused this prompt" in result.output
+    assert "policy risk" in result.output         # the provider's own message is surfaced
+    assert [a.refusal for a in result.attempts] == [True, True]
+    # no healthy provider was cooled down by a refusal
+    assert state.get("claude").available(1000.0) is True
+    assert state.get("codex").available(1000.0) is True
+
+
+def test_refusal_plus_cooled_provider_still_reports_exhaustion(tmp_path):
+    # Boundary for the all-refusal branch: if one provider is genuinely cooling down (quota) while
+    # another refuses, the run is NOT pure-refusal — a provider will free up, so it must still report
+    # "exhausted" with the ETA, not "all refused".
+    config_text = TOML.replace(
+        'quota_markers = ["rate limit", "429"]',
+        'quota_markers = ["rate limit", "429"]\nrefusal_markers = ["policy risk"]',
+    )
+    path = tmp_path / "broker.toml"
+    path.write_text(config_text)
+    cfg, state = cfgmod.load(path), _state(tmp_path)
+    state.cool_down("claude", until=5000.0)  # claude on a real quota cooldown
+
+    def executor(argv, stdin):  # only codex runs; it refuses
+        return 1, "codex: blocked, this request may present a policy risk"
+
+    result = run_task(cfg, state, "task", executor=executor, now_fn=lambda: 1000.0)
+
+    assert result.provider is None
+    assert result.exhausted is True
+    assert "exhausted" in result.output and "claude" in result.output  # names the freeing provider
+    assert "refused this prompt" not in result.output
+
+
 def test_refusal_detection_is_opt_in(tmp_path):
     cfg, state = _cfg(tmp_path), _state(tmp_path)
     result = run_task(cfg, state, "x", executor=lambda a, s: (1, "I cannot help with that"),

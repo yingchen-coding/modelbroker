@@ -123,6 +123,7 @@ def run_task(
     started = now_fn()  # one logical timestamp per invocation — keeps routing decisions consistent
     p = plan(config, state, task, started)
     result = RunResult(provider=None, exit_code=1, output="")
+    last_refusal: tuple[str, int, str] | None = None  # (provider, exit_code, output) of last refusal
 
     if not p.order:
         result.output = f"no providers configured for task {task!r}"
@@ -150,7 +151,9 @@ def run_task(
             # quota-exhausted, missing-CLI, OR a retryable provider-side fault: cool the provider
             # down and fail over to the next, so one model's hiccup doesn't end the whole run. A
             # generic/terminal nonzero (bad prompt, policy refusal) falls through and is returned.
-            if not refusal:
+            if refusal:
+                last_refusal = (name, code, output)
+            else:
                 cooldown = (provider.reset_seconds if quota
                             else _UNAVAILABLE_COOLDOWN if unavailable
                             else _TRANSIENT_COOLDOWN)
@@ -160,13 +163,32 @@ def run_task(
         result.provider, result.exit_code, result.output = name, code, output
         return result
 
-    # everyone was cooled down or hit quota this pass
-    result.exhausted = True
-    p2 = plan(config, state, task, started)
-    if p2.soonest is not None:
+    # No provider succeeded. The candidates split into ones genuinely on cooldown (quota / missing /
+    # transient — they free up later) and ones that *refused* (still "available", but would just
+    # refuse the same prompt again). A refused provider stays available, so plan()'s soonest can't be
+    # trusted here — key off the real cooldown set instead.
+    cooling = [n for n in p.order if not state.get(n).available(started)]
+    if not cooling and last_refusal is not None:
+        # Nothing is on cooldown — the run ended only because every provider that answered *refused*
+        # the prompt. That's a terminal content/policy issue, not exhaustion; surface the actual
+        # refusal (and the provider's own message) so the caller sees the real cause, not a
+        # misleading "out of quota". (exhausted stays False: no quota window to wait on.)
+        refused = [a.provider for a in result.attempts if a.refusal]
+        _, rcode, routput = last_refusal
+        result.provider, result.exit_code = None, rcode or 1
+        detail = f"\n{routput.strip()}" if routput.strip() else ""
         result.output = (
-            f"all providers exhausted; {p2.soonest} frees up in {int(p2.soonest_eta)}s"
+            f"all providers refused this prompt (policy refusal, not a quota issue): "
+            f"{', '.join(refused)}{detail}"
         )
+        return result
+
+    # at least one provider is genuinely cooled down / out of quota this pass
+    result.exhausted = True
+    if cooling:
+        soonest = min(cooling, key=lambda n: state.get(n).cooldown_until)
+        eta = int(state.get(soonest).cooldown_remaining(started))
+        result.output = f"all providers exhausted; {soonest} frees up in {eta}s"
     else:
         result.output = "all providers exhausted"
     return result

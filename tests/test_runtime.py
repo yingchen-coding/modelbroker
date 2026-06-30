@@ -75,3 +75,20 @@ default = ["fast"]
     out = capsys.readouterr().out
     assert "tokens_per_second: 50.00" in out
     assert "cost_per_1k_tokens: $0.2000" in out
+
+
+def test_runtime_report_survives_malformed_numeric_fields(tmp_path):
+    # Real trace files contain garbage: a truncated line, a provider that wrote a string where a
+    # number belongs. One bad field must not crash the whole report — the good rows still count.
+    trace = tmp_path / ".broker-trace.jsonl"
+    append(trace, {"provider": "a", "seconds": "oops", "total_tokens": "NaN",
+                   "estimated_cost_usd": None, "exit_code": 0})
+    append(trace, {"provider": "b", "seconds": 4.0, "total_tokens": 400,
+                   "estimated_cost_usd": 0.08, "exit_code": 0})
+
+    report = runtime_report(trace)  # must not raise
+
+    assert report.runs == 2
+    assert report.total_tokens == 400          # the bad row contributes 0, not a crash
+    assert report.total_seconds == 4.0
+    assert report.by_provider["a"]["tokens"] == 0

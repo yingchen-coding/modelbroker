@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -65,8 +66,8 @@ def runtime_report(path: str | Path) -> RuntimeReport:
     rows = _load_rows(Path(path))
     runs = len(rows)
     total_tokens = sum(_tokens(row) for row in rows)
-    total_seconds = round(sum(float(row.get("seconds") or 0.0) for row in rows), 6)
-    total_cost = round(sum(float(row.get("estimated_cost_usd") or 0.0) for row in rows), 6)
+    total_seconds = round(sum(_num(row.get("seconds")) for row in rows), 6)
+    total_cost = round(sum(_num(row.get("estimated_cost_usd")) for row in rows), 6)
     errors = sum(1 for row in rows if _is_error(row))
     by_provider_raw: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -76,8 +77,8 @@ def runtime_report(path: str | Path) -> RuntimeReport:
     by_provider: dict[str, dict[str, float | int]] = {}
     for provider, provider_rows in by_provider_raw.items():
         provider_tokens = sum(_tokens(row) for row in provider_rows)
-        provider_seconds = sum(float(row.get("seconds") or 0.0) for row in provider_rows)
-        provider_cost = sum(float(row.get("estimated_cost_usd") or 0.0) for row in provider_rows)
+        provider_seconds = sum(_num(row.get("seconds")) for row in provider_rows)
+        provider_cost = sum(_num(row.get("estimated_cost_usd")) for row in provider_rows)
         by_provider[provider] = {
             "runs": len(provider_rows),
             "tokens": provider_tokens,
@@ -125,12 +126,32 @@ def _load_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _num(value: Any) -> float:
+    """Coerce a trace field to float, tolerating the garbage real trace files contain (None, '',
+    a non-numeric string from a truncated/buggy provider line). A single bad field must never crash
+    the whole report — we already skip malformed JSON *lines*; this gives malformed *fields* the same
+    grace instead of letting one row take down `broker cost`."""
+    if value is None:
+        return 0.0
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    # NaN/inf slip through float() ("NaN", "inf") but blow up int() and poison every sum they touch;
+    # treat them as missing, not as data.
+    return result if math.isfinite(result) else 0.0
+
+
+def _int(value: Any) -> int:
+    return int(_num(value))
+
+
 def _tokens(row: dict[str, Any]) -> int:
     if row.get("total_tokens") is not None:
-        return int(row.get("total_tokens") or 0)
+        return _int(row.get("total_tokens"))
     if row.get("tokens") is not None:
-        return int(row.get("tokens") or 0)
-    return int(row.get("input_tokens") or 0) + int(row.get("output_tokens") or 0)
+        return _int(row.get("tokens"))
+    return _int(row.get("input_tokens")) + _int(row.get("output_tokens"))
 
 
 def _is_error(row: dict[str, Any]) -> bool:

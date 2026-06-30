@@ -265,3 +265,43 @@ def test_state_round_trips(tmp_path):
     assert reloaded.get("claude").cooldown_until == 9999.0
     assert reloaded.get("codex").runs == 1
     assert json.loads(state.path.read_text())  # valid JSON
+
+
+def test_concurrent_save_does_not_erase_another_processes_cooldown(tmp_path):
+    # Two broker processes load the same base, then both save. The cooldown one of them recorded
+    # must survive the other's write — otherwise the next call routes straight back to the
+    # rate-limited provider and wastes the call this tool exists to prevent.
+    path = tmp_path / "state.json"
+    statemod.State(path=path).save()  # establish a base file both "processes" load from
+
+    proc_a = statemod.load(path)
+    proc_b = statemod.load(path)
+
+    proc_a.cool_down("claude", until=9999.0)  # A learns Claude is rate-limited
+    proc_a.save()
+
+    proc_b.record_run("codex", now=100.0)     # B, unaware, finishes a codex run and saves last
+    proc_b.save()
+
+    reloaded = statemod.load(path)
+    assert reloaded.get("claude").cooldown_until == 9999.0  # cooldown not clobbered
+    assert reloaded.get("codex").runs == 1
+
+
+def test_save_is_atomic_and_leaves_no_temp_files(tmp_path):
+    state = _state(tmp_path)
+    state.cool_down("claude", until=5000.0)
+    state.save()
+    # an interrupted write must never leave a half-file or stray temp behind
+    leftovers = [p.name for p in tmp_path.iterdir() if ".tmp." in p.name]
+    assert leftovers == []
+    assert json.loads(state.path.read_text())["claude"]["cooldown_until"] == 5000.0
+
+
+def test_corrupt_state_file_is_repaired_on_next_save(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text("{ this is not valid json", encoding="utf-8")  # torn write from a prior crash
+    state = statemod.load(path)            # load survives corruption (starts fresh)
+    state.cool_down("codex", until=42.0)
+    state.save()                            # save must overwrite the garbage with valid JSON
+    assert json.loads(path.read_text())["codex"]["cooldown_until"] == 42.0

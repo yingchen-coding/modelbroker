@@ -233,7 +233,15 @@ broker run -t reasoning "refactor this module"
 # every later command skips claude until its window resets, then routes back to it
 ```
 
+## Local Review Gate
+
+```bash
+scripts/pr_review_check.sh
+```
+
+This runs compile checks, tests, Ruff when available, secret scanning, and commit-history
+attribution checks. GitHub runs the same gate through the `PR Review Gate` workflow.
+
 ## License
 
 MIT © Ying Chen
-
